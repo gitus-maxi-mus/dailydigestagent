@@ -78,7 +78,28 @@ def resolve_username(user_id, user_cache):
         user_cache[user_id] = name
         return name
     except SlackApiError:
+        user_cache[user_id] = user_id
         return user_id
+
+
+def resolve_mentions(text, user_cache):
+    import re
+    def replace_mention(match):
+        uid = match.group(1)
+        return f"@{resolve_username(uid, user_cache)}"
+    return re.sub(r"<@([A-Z0-9]+)>", replace_mention, text)
+
+
+def markdown_to_html(text):
+    import re
+    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+    text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
+    text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
+    text = re.sub(r"(<li>.*</li>)", r"<ul>\1</ul>", text, flags=re.DOTALL)
+    text = re.sub(r"^### (.+)$", r"<h4>\1</h4>", text, flags=re.MULTILINE)
+    text = re.sub(r"^## (.+)$", r"<h3>\1</h3>", text, flags=re.MULTILINE)
+    text = text.replace("\n", "<br/>")
+    return text
 
 
 def summarize_channel(channel_name, messages_text):
@@ -87,20 +108,21 @@ def summarize_channel(channel_name, messages_text):
 Messages from the last 24 hours:
 {messages_text}
 
-Write a clear, structured summary with:
-- Key topics discussed
-- Important decisions or action items
-- Notable announcements
-- Any open questions
+Write a detailed, structured summary in HTML-friendly plain text. Include:
+- **Key Topics Discussed** — explain each topic with enough detail to understand what was said
+- **Important Decisions or Action Items** — who decided what, what needs to be done
+- **Notable Announcements** — anything shared that is noteworthy
+- **Open Questions** — unresolved questions or things needing follow-up
 
-Be concise but thorough. Use bullet points."""
+For each point include context and specifics — not just headlines. Name the people involved where relevant.
+Use bullet points with ** for bold headers."""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=1024
+        max_tokens=2048
     )
-    return response.choices[0].message.content
+    return markdown_to_html(response.choices[0].message.content)
 
 
 def build_email(channel_summaries):
@@ -152,6 +174,7 @@ def main():
                 ts = msg.get("ts", "")
                 dt = datetime.fromtimestamp(float(ts)).strftime("%H:%M") if ts else ""
 
+                text = resolve_mentions(text, user_cache)
                 messages_text += f"[{dt}] {user}: {text}\n"
 
                 if msg.get("reply_count", 0) > 0:
@@ -161,7 +184,7 @@ def main():
                     threads.append({"url": permalink, "label": f"Thread: {thread_preview}"})
                     for reply in replies[1:]:
                         reply_user = resolve_username(reply.get("user", "unknown"), user_cache)
-                        reply_text = reply.get("text", "")
+                        reply_text = resolve_mentions(reply.get("text", ""), user_cache)
                         reply_ts = reply.get("ts", "")
                         reply_dt = datetime.fromtimestamp(float(reply_ts)).strftime("%H:%M") if reply_ts else ""
                         messages_text += f"  [{reply_dt}] {reply_user} (reply): {reply_text}\n"
