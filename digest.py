@@ -33,8 +33,11 @@ def get_channels():
             cursor=cursor
         )
         for ch in resp["channels"]:
-            if ch.get("is_member") and ch["name"] not in EXCLUDE_CHANNELS:
+            name = ch["name"].strip().lower()
+            if ch.get("is_member") and name not in EXCLUDE_CHANNELS:
                 channels.append({"id": ch["id"], "name": ch["name"]})
+            elif ch.get("is_member") and name in EXCLUDE_CHANNELS:
+                print(f"  Skipping excluded channel: #{ch['name']}")
         cursor = resp.get("response_metadata", {}).get("next_cursor")
         if not cursor:
             break
@@ -238,19 +241,25 @@ def main():
                 dt = datetime.fromtimestamp(float(ts)).strftime("%H:%M") if ts else ""
 
                 text = resolve_mentions(text, user_cache)
-                messages_text += f"[{dt}] {user}: {text}\n"
+                has_thread = msg.get("reply_count", 0) > 0
+                reply_count = msg.get("reply_count", 0)
 
-                if msg.get("reply_count", 0) > 0:
+                if has_thread:
+                    messages_text += f"\n--- Thread ({reply_count} replies) ---\n"
+                    messages_text += f"[{dt}] {user}: {text}\n"
                     permalink = get_permalink(ch["id"], ts)
                     replies = get_thread_replies(ch["id"], ts)
-                    thread_preview = text[:60] + "..." if len(text) > 60 else text
+                    thread_preview = text[:80] + "..." if len(text) > 80 else text
                     threads.append({"url": permalink, "label": f"Thread: {thread_preview}"})
                     for reply in replies[1:]:
                         reply_user = resolve_username(reply.get("user", "unknown"), user_cache)
                         reply_text = resolve_mentions(reply.get("text", ""), user_cache)
                         reply_ts = reply.get("ts", "")
                         reply_dt = datetime.fromtimestamp(float(reply_ts)).strftime("%H:%M") if reply_ts else ""
-                        messages_text += f"  [{reply_dt}] {reply_user} (reply): {reply_text}\n"
+                        messages_text += f"  [{reply_dt}] {reply_user}: {reply_text}\n"
+                    messages_text += "--- End Thread ---\n\n"
+                else:
+                    messages_text += f"[{dt}] {user}: {text}\n"
 
                 time.sleep(0.5)
 
