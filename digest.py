@@ -16,7 +16,7 @@ slack = WebClient(token=SLACK_TOKEN)
 groq_client = Groq(api_key=GROQ_API_KEY)
 resend.api_key = RESEND_API_KEY
 
-EXCLUDE_CHANNELS = []  # add channel names here to exclude e.g. ["random", "general"]
+EXCLUDE_CHANNELS = ["announcements", "careers-and-referrals", "cards-and-rewards", "social-and-watercooler"]
 
 
 def get_channels():
