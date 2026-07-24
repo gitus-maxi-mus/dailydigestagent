@@ -1,5 +1,8 @@
 import os
+import re
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -83,7 +86,6 @@ def resolve_username(user_id, user_cache):
 
 
 def resolve_mentions(text, user_cache):
-    import re
     def replace_mention(match):
         uid = match.group(1)
         return f"@{resolve_username(uid, user_cache)}"
@@ -91,7 +93,6 @@ def resolve_mentions(text, user_cache):
 
 
 def markdown_to_html(text):
-    import re
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"^- (.+)$", r"<li>\1</li>", text, flags=re.MULTILINE)
@@ -102,12 +103,61 @@ def markdown_to_html(text):
     return text
 
 
+def extract_entities(text):
+    # Extract stock tickers (e.g. $AAPL) and capitalised company/stock names
+    tickers = re.findall(r'\$([A-Z]{1,5})\b', text)
+    # Common company/stock name patterns - capitalised words that look like names
+    companies = re.findall(r'\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)*(?:\s(?:Inc|Ltd|Corp|Group|Holdings|Technologies|Highways|IPO))?)\b', text)
+    entities = list(set(tickers + [c for c in companies if len(c) > 4]))
+    return entities[:8]  # cap at 8 to avoid too many searches
+
+
+def web_search(query):
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        # Extract result snippets
+        snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.DOTALL)
+        titles = re.findall(r'class="result__title"[^>]*>.*?<a[^>]*>(.*?)</a>', html, re.DOTALL)
+        results = []
+        for i in range(min(3, len(snippets))):
+            title = re.sub(r'<[^>]+>', '', titles[i]).strip() if i < len(titles) else ""
+            snippet = re.sub(r'<[^>]+>', '', snippets[i]).strip()
+            if title and snippet:
+                results.append(f"- {title}: {snippet}")
+        return "\n".join(results) if results else ""
+    except Exception:
+        return ""
+
+
+def get_web_context(messages_text):
+    entities = extract_entities(messages_text)
+    if not entities:
+        return ""
+    context_parts = []
+    for entity in entities:
+        query = f"{entity} stock news today"
+        result = web_search(query)
+        if result:
+            context_parts.append(f"**{entity}:**\n{result}")
+        time.sleep(1)
+    return "\n\n".join(context_parts)
+
+
 def summarize_channel(channel_name, messages_text):
+    web_context = get_web_context(messages_text)
+    web_section = f"""
+Current web context for stocks/companies mentioned:
+{web_context}
+""" if web_context else ""
+
     prompt = f"""You are summarizing Slack messages from the channel #{channel_name} for a busy professional who missed the last 24 hours.
 
 Messages from the last 24 hours:
 {messages_text}
-
+{web_section}
 Write a rich, detailed summary that covers:
 
 **Gist of the Day** — 2-3 sentences capturing the overall vibe and main theme of the channel today.
@@ -118,6 +168,12 @@ Write a rich, detailed summary that covers:
 - How it concluded or what the current status is
 - Any links, resources, or recommendations shared
 
+**Stocks & Companies** — if any stocks or companies were mentioned, provide a dedicated section with:
+- What was said about each one in the channel
+- Latest news or context from the web (use the web context provided above)
+- Any price movements, IPOs, or news worth noting
+- Do NOT skip any company or stock that was mentioned, even briefly
+
 **Decisions & Action Items** — concrete things decided or tasks assigned, with names
 
 **Open Questions** — anything unresolved that may need follow-up
@@ -125,9 +181,9 @@ Write a rich, detailed summary that covers:
 Be specific and detailed. A reader should feel fully caught up after reading this, as if they were present in the conversation. Name people throughout. Do not skip any conversation."""
 
     response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=2048
+        max_tokens=3000
     )
     return markdown_to_html(response.choices[0].message.content)
 
