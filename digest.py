@@ -103,19 +103,26 @@ def markdown_to_html(text):
 
 
 def summarize_channel(channel_name, messages_text):
-    prompt = f"""You are summarizing Slack messages from the channel #{channel_name} for a daily digest.
+    prompt = f"""You are summarizing Slack messages from the channel #{channel_name} for a busy professional who missed the last 24 hours.
 
 Messages from the last 24 hours:
 {messages_text}
 
-Write a detailed, structured summary in HTML-friendly plain text. Include:
-- **Key Topics Discussed** — explain each topic with enough detail to understand what was said
-- **Important Decisions or Action Items** — who decided what, what needs to be done
-- **Notable Announcements** — anything shared that is noteworthy
-- **Open Questions** — unresolved questions or things needing follow-up
+Write a rich, detailed summary that covers:
 
-For each point include context and specifics — not just headlines. Name the people involved where relevant.
-Use bullet points with ** for bold headers."""
+**Gist of the Day** — 2-3 sentences capturing the overall vibe and main theme of the channel today.
+
+**Conversation Breakdowns** — for each distinct discussion or thread:
+- What was the topic or question raised, and who raised it
+- What was discussed back and forth — include the key points each person made
+- How it concluded or what the current status is
+- Any links, resources, or recommendations shared
+
+**Decisions & Action Items** — concrete things decided or tasks assigned, with names
+
+**Open Questions** — anything unresolved that may need follow-up
+
+Be specific and detailed. A reader should feel fully caught up after reading this, as if they were present in the conversation. Name people throughout. Do not skip any conversation."""
 
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
